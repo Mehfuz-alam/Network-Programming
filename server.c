@@ -11,8 +11,16 @@
 #define PORT 8080
 #define MAX_CLIENTS 5
 #define BUFFER_SIZE 512
-#define QUESTION_TIME 10
+#define QUESTION_TIME 15
+#define TOTAL_QUESTIONS 3
 
+/* Question structure */
+typedef struct {
+    char question[256];
+    char correct;
+} Question;
+
+/* Client structure */
 typedef struct {
     int sock;
     int score;
@@ -22,19 +30,34 @@ typedef struct {
 
 Client clients[MAX_CLIENTS];
 
-char question[] =
+/* Question bank */
+Question quiz[TOTAL_QUESTIONS] = {
+
+{
 "Q1: What is the capital of Nepal?\n"
-"A) Pokhara\n"
-"B) Kathmandu\n"
-"C) Lalitpur\n"
-"D) Biratnagar\n";
+"A) Pokhara\nB) Kathmandu\nC) Lalitpur\nD) Biratnagar\n",
+'B'
+},
 
-char correct_answer = 'B';
+{
+"Q2: Which protocol is connection-oriented?\n"
+"A) UDP\nB) IP\nC) TCP\nD) FTP\n",
+'C'
+},
 
+{
+"Q3: Which port is used for HTTP?\n"
+"A) 21\nB) 25\nC) 80\nD) 110\n",
+'C'
+}
+
+};
+
+int current_question = 0;
 time_t start_time;
 int quiz_started = 0;
 
-/* Function to handle fatal errors */
+/* Function to exit on error */
 void error_exit(const char *msg)
 {
     perror(msg);
@@ -49,145 +72,169 @@ void init_clients()
         clients[i].sock = 0;
         clients[i].score = 0;
         clients[i].answered = 0;
-        sprintf(clients[i].name, "Player%d", i+1);
+        sprintf(clients[i].name,"Player%d",i+1);
     }
 }
 
 /* Send message safely */
-void send_safe(int sock, const char *msg)
+void send_safe(int sock,const char *msg)
 {
-    if(send(sock, msg, strlen(msg), 0) < 0)
-    {
+    if(send(sock,msg,strlen(msg),0)<0)
         perror("Send failed");
-    }
 }
 
-/* Broadcast leaderboard */
+/* Broadcast question */
+void broadcast_question()
+{
+    printf("\nSending Question %d\n",current_question+1);
+
+    for(int i=0;i<MAX_CLIENTS;i++)
+    {
+        if(clients[i].sock>0)
+        {
+            clients[i].answered=0;
+            send_safe(clients[i].sock,quiz[current_question].question);
+        }
+    }
+
+    start_time=time(NULL);
+}
+
+/* Send leaderboard */
 void send_leaderboard()
 {
     char board[BUFFER_SIZE];
     char line[128];
 
-    strcpy(board, "\n=== Leaderboard ===\n");
+    strcpy(board,"\n===== FINAL LEADERBOARD =====\n");
 
     for(int i=0;i<MAX_CLIENTS;i++)
     {
-        if(clients[i].sock > 0)
+        if(clients[i].sock>0)
         {
-            sprintf(line, "%s : %d\n", clients[i].name, clients[i].score);
-            strcat(board, line);
+            sprintf(line,"%s : %d\n",clients[i].name,clients[i].score);
+            strcat(board,line);
         }
     }
 
-    strcat(board, "====================\n");
+    strcat(board,"=============================\n");
 
     for(int i=0;i<MAX_CLIENTS;i++)
     {
-        if(clients[i].sock > 0)
-        {
-            send_safe(clients[i].sock, board);
-        }
+        if(clients[i].sock>0)
+            send_safe(clients[i].sock,board);
     }
+
+    printf("%s",board);
 }
 
-/* Remove disconnected client */
-void remove_client(int index)
+/* Count active clients */
+int active_clients()
 {
-    printf("%s disconnected\n", clients[index].name);
-    close(clients[index].sock);
-    clients[index].sock = 0;
+    int count=0;
+
+    for(int i=0;i<MAX_CLIENTS;i++)
+        if(clients[i].sock>0)
+            count++;
+
+    return count;
+}
+
+/* Count answered clients */
+int answered_clients()
+{
+    int count=0;
+
+    for(int i=0;i<MAX_CLIENTS;i++)
+        if(clients[i].sock>0 && clients[i].answered)
+            count++;
+
+    return count;
+}
+
+/* Remove client */
+void remove_client(int i)
+{
+    close(clients[i].sock);
+    clients[i].sock=0;
 }
 
 int main()
 {
-    int server_fd, new_socket, activity, max_sd;
+    int server_fd,new_socket,activity,max_sd;
     struct sockaddr_in address;
-    socklen_t addrlen = sizeof(address);
+    socklen_t addrlen=sizeof(address);
 
     fd_set readfds;
     struct timeval timeout;
 
-    /* Create socket */
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if(server_fd < 0)
+    int opt=1;
+
+    server_fd=socket(AF_INET,SOCK_STREAM,0);
+    if(server_fd<0)
         error_exit("Socket failed");
 
-    /* Allow reuse */
-    int opt = 1;
-    if(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
-        error_exit("setsockopt failed");
+    setsockopt(server_fd,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
 
-    /* Configure address */
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    address.sin_family=AF_INET;
+    address.sin_addr.s_addr=INADDR_ANY;
+    address.sin_port=htons(PORT);
 
-    /* Bind */
-    if(bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    if(bind(server_fd,(struct sockaddr*)&address,sizeof(address))<0)
         error_exit("Bind failed");
 
-    /* Listen */
-    if(listen(server_fd, 5) < 0)
+    if(listen(server_fd,5)<0)
         error_exit("Listen failed");
 
-    printf("Quiz Server started on port %d\n", PORT);
+    printf("Quiz Server started on port %d\n",PORT);
 
     init_clients();
 
     while(1)
     {
         FD_ZERO(&readfds);
-        FD_SET(server_fd, &readfds);
-        max_sd = server_fd;
+        FD_SET(server_fd,&readfds);
+        max_sd=server_fd;
 
-        /* Add client sockets */
         for(int i=0;i<MAX_CLIENTS;i++)
         {
-            int sd = clients[i].sock;
-            if(sd > 0)
-                FD_SET(sd, &readfds);
+            int sd=clients[i].sock;
 
-            if(sd > max_sd)
-                max_sd = sd;
+            if(sd>0)
+                FD_SET(sd,&readfds);
+
+            if(sd>max_sd)
+                max_sd=sd;
         }
 
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
+        timeout.tv_sec=1;
+        timeout.tv_usec=0;
 
-        activity = select(max_sd + 1, &readfds, NULL, NULL, &timeout);
+        activity=select(max_sd+1,&readfds,NULL,NULL,&timeout);
 
-        if(activity < 0)
+        if(activity<0)
             error_exit("select error");
 
-        /* New connection */
-        if(FD_ISSET(server_fd, &readfds))
+        /* New client connection */
+        if(FD_ISSET(server_fd,&readfds))
         {
-            new_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
+            new_socket=accept(server_fd,(struct sockaddr*)&address,&addrlen);
 
-            if(new_socket < 0)
-                perror("Accept failed");
-            else
+            printf("New client connected\n");
+
+            for(int i=0;i<MAX_CLIENTS;i++)
             {
-                printf("New client connected\n");
-
-                for(int i=0;i<MAX_CLIENTS;i++)
+                if(clients[i].sock==0)
                 {
-                    if(clients[i].sock == 0)
+                    clients[i].sock=new_socket;
+
+                    if(!quiz_started)
                     {
-                        clients[i].sock = new_socket;
-                        clients[i].answered = 0;
-
-                        send_safe(new_socket, question);
-
-                        if(!quiz_started)
-                        {
-                            quiz_started = 1;
-                            start_time = time(NULL);
-                            printf("Quiz started\n");
-                        }
-
-                        break;
+                        quiz_started=1;
+                        broadcast_question();
                     }
+
+                    break;
                 }
             }
         }
@@ -195,49 +242,62 @@ int main()
         /* Receive answers */
         for(int i=0;i<MAX_CLIENTS;i++)
         {
-            int sd = clients[i].sock;
+            int sd=clients[i].sock;
 
-            if(sd > 0 && FD_ISSET(sd, &readfds))
+            if(sd>0 && FD_ISSET(sd,&readfds) && !clients[i].answered)
             {
                 char ans;
-                int bytes = recv(sd, &ans, 1, 0);
 
-                if(bytes <= 0)
+                int bytes=recv(sd,&ans,1,0);
+
+                if(bytes<=0)
                 {
                     remove_client(i);
                 }
-                else if(!clients[i].answered)
+                else
                 {
-                    clients[i].answered = 1;
+                    clients[i].answered=1;
 
-                    if(ans == correct_answer)
+                    if(ans==quiz[current_question].correct)
                     {
-                        clients[i].score += 10;
-                        send_safe(sd, "Correct answer!\n");
+                        clients[i].score+=10;
+                        send_safe(sd,"Correct! +10\n");
                     }
                     else
                     {
-                        send_safe(sd, "Wrong answer!\n");
+                        clients[i].score-=5;
+                        send_safe(sd,"Wrong! -5\n");
                     }
                 }
             }
         }
 
-        /* Timer check */
-        if(quiz_started && difftime(time(NULL), start_time) >= QUESTION_TIME)
+        /* Move to next question */
+        if(quiz_started)
         {
-            printf("Time up\n");
-            send_leaderboard();
-            break;
+            int act=active_clients();
+            int ans=answered_clients();
+
+            if(ans==act || difftime(time(NULL),start_time)>=QUESTION_TIME)
+            {
+                current_question++;
+
+                if(current_question<TOTAL_QUESTIONS)
+                {
+                    broadcast_question();
+                }
+                else
+                {
+                    send_leaderboard();
+                    break;
+                }
+            }
         }
     }
 
-    /* Cleanup */
     for(int i=0;i<MAX_CLIENTS;i++)
-    {
-        if(clients[i].sock > 0)
+        if(clients[i].sock>0)
             close(clients[i].sock);
-    }
 
     close(server_fd);
 

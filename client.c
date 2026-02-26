@@ -21,55 +21,44 @@ int main()
     char buffer[BUFFER_SIZE];
     char answer;
 
-    /* Create socket */
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if(sock < 0)
-        error_exit("Socket creation failed");
+    sock=socket(AF_INET,SOCK_STREAM,0);
 
-    server.sin_family = AF_INET;
-    server.sin_port = htons(PORT);
+    if(sock<0)
+        error_exit("Socket failed");
 
-    if(inet_pton(AF_INET, "127.0.0.1", &server.sin_addr) <= 0)
+    server.sin_family=AF_INET;
+    server.sin_port=htons(PORT);
+
+    if(inet_pton(AF_INET,"127.0.0.1",&server.sin_addr)<=0)
         error_exit("Invalid address");
 
-    /* Connect */
-    if(connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0)
+    if(connect(sock,(struct sockaddr*)&server,sizeof(server))<0)
         error_exit("Connection failed");
 
-    printf("Connected to quiz server\n");
+    printf("Connected to Quiz Server\n");
 
-    /* Receive question */
-    int bytes = recv(sock, buffer, BUFFER_SIZE, 0);
-    if(bytes <= 0)
-        error_exit("Failed to receive question");
-
-    buffer[bytes] = '\0';
-
-    printf("\n%s\n", buffer);
-
-    /* Get answer */
-    printf("Enter answer (A/B/C/D): ");
-    scanf(" %c", &answer);
-
-    if(answer!='A' && answer!='B' && answer!='C' && answer!='D')
+    while(1)
     {
-        printf("Invalid input\n");
-        close(sock);
-        return 0;
+        int bytes=recv(sock,buffer,BUFFER_SIZE-1,0);
+
+        if(bytes<=0)
+            break;
+
+        buffer[bytes]='\0';
+
+        printf("\n%s\n",buffer);
+
+        /* Check if question */
+        if(strstr(buffer,"A)")!=NULL)
+        {
+            printf("Enter answer: ");
+            scanf(" %c",&answer);
+
+            send(sock,&answer,1,0);
+        }
     }
 
-    /* Send answer */
-    if(send(sock, &answer, 1, 0) < 0)
-        error_exit("Send failed");
-
-    /* Receive result and leaderboard */
-    while((bytes = recv(sock, buffer, BUFFER_SIZE-1, 0)) > 0)
-    {
-        buffer[bytes] = '\0';
-        printf("%s", buffer);
-    }
-
-    printf("\nDisconnected from server\n");
+    printf("Disconnected from server\n");
 
     close(sock);
 
